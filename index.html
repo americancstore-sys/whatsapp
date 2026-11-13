@@ -782,7 +782,21 @@ $('#btnTeam').onclick = async () => {
     <button class="primary">Agregar al equipo</button></form>
     <h3 style="margin-top:24px">Clientes del CRM (Zoho)</h3>
     <p class="sub" id="crmCount">Cargando…</p>
-    <label class="photo-pick" for="crmCsv"><span id="crmTxt">Importar exportación de Zoho (CSV de Leads o Contactos)</span><input type="file" id="crmCsv" accept=".csv,text/csv" class="hidden" multiple></label>`);
+    <label class="photo-pick" for="crmCsv"><span id="crmTxt">Importar exportación de Zoho (CSV de Leads o Contactos)</span><input type="file" id="crmCsv" accept=".csv,text/csv" class="hidden" multiple></label>
+    <button class="secondary" id="crmOut">Descargar todos los clientes (CSV para importar en Zoho)</button>`);
+  $('#crmOut').onclick = async () => {
+    $('#crmOut').disabled = true; $('#crmOut').textContent = 'Preparando…';
+    try{
+      let all = [];
+      for(let i=0;;i+=1000){ const {data, error} = await sb.from('crm_clientes').select('nombre,telefono,ciudad,email,fuente').order('telefono').range(i,i+999); if(error) throw error; all = all.concat(data); if(data.length<1000) break; }
+      const q = v => `"${String(v??'').replace(/"/g,'""')}"`;
+      const csv = ['Last Name,Mobile,City,Email,Lead Source,Description', ...all.map(r=>[r.nombre, r.telefono, r.ciudad, r.email, 'WhatsApp', 'Importado de '+(r.fuente||'Zoho')].map(q).join(','))].join('\r\n');
+      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv'}));
+      a.download = `clientes-american-clothing-${new Date().toISOString().slice(0,10)}.csv`; a.click();
+      toast(`${all.length.toLocaleString('es-CO')} clientes descargados`);
+    }catch(err){ toast('Error: '+err.message); }
+    $('#crmOut').disabled = false; $('#crmOut').textContent = 'Descargar todos los clientes (CSV para importar en Zoho)';
+  };
   sb.from('crm_clientes').select('*',{count:'exact',head:true}).then(({count}) => { const el=$('#crmCount'); if(el) el.textContent = `${(count||0).toLocaleString('es-CO')} clientes del CRM disponibles para buscar por celular o nombre.`; });
   $('#crmCsv').onchange = async e => {
     const files = [...e.target.files]; let total = 0;
