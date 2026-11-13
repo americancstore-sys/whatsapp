@@ -48,6 +48,26 @@ main{max-width:1100px;margin:0 auto;padding:12px 16px 120px}
 .group h2{font-stretch:110%;font-weight:800;font-size:17px;margin:0;flex:1;min-width:140px}
 .group span{font-size:13px;color:var(--ink-2)}
 .group b{font-weight:700}
+.thumb{position:relative}
+.thumb .n{position:absolute;right:4px;bottom:4px;background:var(--ink);color:#fff;font-size:11px;font-weight:700;border-radius:6px;padding:1px 6px}
+.items{display:grid;gap:10px;margin-bottom:10px}
+.item{border:1px solid var(--line);border-radius:10px;padding:10px;display:grid;grid-template-columns:64px 1fr;gap:10px;position:relative}
+.item .ph{width:64px;height:78px;border-radius:8px;background:var(--paper) center/cover no-repeat;display:grid;place-items:center;font-size:11px;color:var(--mute);text-align:center;cursor:pointer;border:1px dashed var(--line)}
+.item label{margin-bottom:6px}
+.item .rm{position:absolute;top:6px;right:6px;border:0;background:var(--paper);border-radius:6px;padding:2px 8px;font-size:12px;color:var(--danger)}
+.addrow{display:flex;gap:8px;margin-bottom:10px}
+.addrow .addbtn{flex:1;margin:0;text-align:center;cursor:pointer;color:var(--ink);border:1px dashed var(--ink-2);background:#fff;border-radius:10px;padding:10px;font-weight:600;font-size:13px}
+.addrow button{flex:1;border:1px dashed var(--ink-2);background:#fff;border-radius:10px;padding:10px;font-weight:600;font-size:13px}
+.totalbox{display:flex;justify-content:space-between;align-items:baseline;background:var(--paper);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:14px}
+.totalbox b{font-size:18px}
+.sugg{border:1px solid var(--line);border-radius:8px;margin:-6px 0 10px;overflow:hidden}
+.sugg button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--paper);background:#fff;padding:8px 10px;font-size:13px}
+.sugg button:last-child{border-bottom:0}
+.sugg small{color:var(--mute)}
+.d-items{display:grid;gap:8px;margin:8px 0}
+.d-item{display:grid;grid-template-columns:56px 1fr auto;gap:10px;align-items:center;font-size:14px}
+.d-item img,.d-item .noimg{width:56px;height:68px;object-fit:cover;border-radius:6px;background:var(--paper)}
+.d-item small{display:block;color:var(--mute)}
 
 /* list */
 .list{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
@@ -206,7 +226,8 @@ const FLOW = ESTADOS.slice(0,6).map(e=>e.k);
 const CANALES = {whatsapp:'WhatsApp', instagram:'Instagram', llamada:'Llamada', grupo_vip:'Grupo VIP', tienda:'Tienda', otro:'Otro'};
 const METODOS = ['Nequi','Bancolombia','Daviplata','Efectivo','Transferencia','Otro'];
 
-let me = null, isAdmin = false, rows = [], filter = 'activos', selected = new Set(), photoUrls = {}, team = {};
+let me = null, isAdmin = false, rows = [], filter = 'activos', selected = new Set(), photoUrls = {}, team = {}, itemsBy = {};
+const MARCAS = ['Hugo Boss','Psycho Bunny','Tommy Hilfiger','True Religion','Calvin Klein','Guess','Karl Lagerfeld','Off-White','Lacoste','Polo Ralph Lauren'];
 const pref = (k,d) => { try { return localStorage.getItem('enc_'+k) ?? d; } catch(_) { return d; } };
 const setPref = (k,v) => { try { localStorage.setItem('enc_'+k, v); } catch(_) {} };
 const asesorName = e => team[e] || (e ? e.split('@')[0] : 'Sin asesor');
@@ -297,7 +318,14 @@ async function load(){
   const {data, error} = await sb.from('vista_encargos').select('*').order('created_at',{ascending:false}).limit(1000);
   if(error){ toast('No se pudo cargar: '+error.message); return; }
   rows = data;
-  await signPhotos(rows.map(r=>r.foto_url).filter(p=>p && !photoUrls[p]));
+  itemsBy = {};
+  const ids = rows.map(r=>r.id);
+  for(let i=0;i<ids.length;i+=200){
+    const {data:its} = await sb.from('encargo_items').select('*').in('encargo_id', ids.slice(i,i+200)).order('orden').order('id');
+    (its||[]).forEach(it => (itemsBy[it.encargo_id] ||= []).push(it));
+  }
+  const paths = rows.map(r=>r.foto_url).concat(Object.values(itemsBy).flat().map(it=>it.foto_url));
+  await signPhotos([...new Set(paths.filter(p=>p && !photoUrls[p]))]);
   render();
 }
 async function signPhotos(paths){
@@ -335,7 +363,7 @@ function filtered(){
     if(filter==='retrasados' && !r.alerta_retraso) return false;
     if(!['activos','todos','retrasados'].includes(filter) && r.estado!==filter) return false;
     if(!q) return true;
-    return [r.codigo,r.cliente_nombre,r.cliente_telefono,r.cliente_instagram,r.producto,r.marca,r.talla].some(v => String(v||'').toLowerCase().includes(q));
+    return [r.codigo,r.cliente_nombre,r.cliente_telefono,r.cliente_instagram,r.producto,r.marca,r.talla, ...(itemsBy[r.id]||[]).flatMap(it=>[it.producto,it.marca])].some(v => String(v||'').toLowerCase().includes(q));
   });
 }
 function render(){
@@ -378,7 +406,7 @@ function card(r, bulkable){
   const late = r.alerta_retraso;
   return `<div class="order ${selected.has(r.id)?'sel':''}" data-id="${r.id}" role="button" tabindex="0" style="--c:${c}">
     ${bulkable ? `<input type="checkbox" class="check" data-sel="${r.id}" ${selected.has(r.id)?'checked':''} aria-label="Seleccionar ${esc(r.codigo)}">` : ''}
-    <div class="thumb" ${img}>${img?'':'Sin foto'}</div>
+    <div class="thumb" ${img}>${img?'':'Sin foto'}${(itemsBy[r.id]||[]).length>1?`<span class="n">${itemsBy[r.id].length} art.</span>`:''}</div>
     <div>
       <div class="o-top"><span class="code">${esc(r.codigo)}</span><span class="days ${late?'late':''}">${r.estado==='entregado'?fdate(r.fecha_entregado):r.dias_desde_abono+' días'}</span></div>
       <div class="o-name">${esc(r.cliente_nombre)}</div>
@@ -425,30 +453,107 @@ function sheet(html){
 }
 function closeSheet(){ $('#sheetRoot').innerHTML=''; document.onkeydown=null; }
 
+/* items editor (shared by new + edit) */
+function itemsEditor(root, initial){
+  let list = (initial && initial.length ? initial : [{}]).map(it => ({...it, _file:null, _prev: it.foto_url && photoUrls[it.foto_url] || null}));
+  const draw = () => {
+    root.innerHTML = `<div class="items">${list.map((it,i)=>`
+      <div class="item" data-i="${i}">
+        ${list.length>1?`<button type="button" class="rm" data-rm="${i}">Quitar</button>`:''}
+        <label class="ph" style="${it._prev?`background-image:url('${it._prev}')`:''}">${it._prev?'':'+ Foto'}<input type="file" accept="image/*" class="hidden" data-ph="${i}"></label>
+        <div>
+          <label>Artículo ${i+1}<input data-f="producto" value="${esc(it.producto||'')}" required placeholder="Camiseta, buzo, perfume…"></label>
+          <div class="row3"><label>Marca<input data-f="marca" list="marcas" value="${esc(it.marca||'')}"></label><label>Talla<input data-f="talla" value="${esc(it.talla||'')}"></label><label>Color<input data-f="color" value="${esc(it.color||'')}"></label></div>
+          <label>Precio encargado<input data-f="precio" inputmode="numeric" required value="${it.precio?Number(it.precio).toLocaleString('es-CO'):''}"></label>
+        </div>
+      </div>`).join('')}</div>
+      <div class="addrow"><button type="button" data-add>+ Agregar artículo</button><label class="addbtn">+ Varias fotos a la vez<input type="file" accept="image/*" multiple class="hidden" data-multi></label></div>
+      <datalist id="marcas">${MARCAS.map(m=>`<option value="${m}">`).join('')}</datalist>`;
+    root.querySelectorAll('[data-f="precio"]').forEach(moneyInput);
+  };
+  const sync = () => root.querySelectorAll('.item').forEach(el => { const it = list[+el.dataset.i]; el.querySelectorAll('[data-f]').forEach(inp => it[inp.dataset.f] = inp.dataset.f==='precio' ? num(inp.value) : inp.value.trim()); });
+  root.addEventListener('input', () => { sync(); root.dispatchEvent(new CustomEvent('total')); });
+  root.addEventListener('click', e => {
+    const rm = e.target.closest('[data-rm]'), add = e.target.closest('[data-add]');
+    if(rm){ sync(); list.splice(+rm.dataset.rm,1); draw(); root.dispatchEvent(new CustomEvent('total')); }
+    if(add){ sync(); list.push({}); draw(); root.querySelectorAll('[data-f="producto"]')[list.length-1].focus(); }
+  });
+  root.addEventListener('change', e => {
+    const ph = e.target.closest('[data-ph]'), multi = e.target.closest('[data-multi]');
+    if(ph && ph.files[0]){ sync(); const it = list[+ph.dataset.ph]; it._file = ph.files[0]; it._prev = URL.createObjectURL(it._file); draw(); }
+    if(multi && multi.files.length){
+      sync();
+      const files = [...multi.files];
+      // fill empty first rows without photo, then append
+      files.forEach(f => {
+        const slot = list.find(it => !it._prev && !it._file);
+        const target = slot || (list.push({}), list[list.length-1]);
+        target._file = f; target._prev = URL.createObjectURL(f);
+      });
+      draw(); root.dispatchEvent(new CustomEvent('total'));
+    }
+  });
+  draw();
+  return {
+    get(){ sync(); return list; },
+    total(){ sync(); return list.reduce((s,it)=>s+(Number(it.precio)||0),0); },
+    async save(encargoId){
+      sync();
+      const keep = [];
+      for(let i=0;i<list.length;i++){
+        const it = list[i];
+        const rec = {encargo_id: encargoId, orden: i, producto: it.producto, marca: it.marca||null, talla: it.talla||null, color: it.color||null, precio: Number(it.precio)||0};
+        if(it._file) rec.foto_url = await uploadFile(it._file, 'fotos');
+        if(it.id){ const {error} = await sb.from('encargo_items').update(rec).eq('id', it.id); if(error) throw error; keep.push(it.id); }
+        else { const {data, error} = await sb.from('encargo_items').insert(rec).select('id').single(); if(error) throw error; keep.push(data.id); }
+      }
+      const old = (itemsBy[encargoId]||[]).map(x=>x.id).filter(id=>!keep.includes(id));
+      if(old.length){ const {error} = await sb.from('encargo_items').delete().in('id', old); if(error) throw error; }
+    }
+  };
+}
+
+/* client search: own clients + CRM (Zoho) */
+function clientSearch(telEl, nomEl, box, onPick){
+  let t;
+  const run = async (q, byName) => {
+    const digits = q.replace(/\D/g,'');
+    if(byName ? q.trim().length < 3 : digits.length < 4){ box.innerHTML=''; return; }
+    const pat = byName ? `%${q.trim()}%` : `%${digits.slice(-10)}%`;
+    const col = byName ? 'nombre' : 'telefono';
+    const [{data:a},{data:b}] = await Promise.all([
+      sb.from('clientes').select('id,nombre,telefono,ciudad,instagram').ilike(col, pat).limit(5),
+      sb.from('crm_clientes').select('nombre,telefono,ciudad,fuente').ilike(col, pat).limit(6)
+    ]);
+    const seen = new Set((a||[]).map(x=>x.telefono));
+    const opts = [...(a||[]).map(x=>({...x, src:'Cliente de encargos'})), ...(b||[]).filter(x=>!seen.has(x.telefono)).map(x=>({...x, src:x.fuente||'CRM'}))];
+    box.innerHTML = opts.length ? `<div class="sugg">${opts.map((o,i)=>`<button type="button" data-o="${i}"><b>${esc(o.nombre)}</b> · ${esc(o.telefono||'')}<br><small>${esc([o.ciudad, o.src].filter(Boolean).join(' · '))}</small></button>`).join('')}</div>` : '';
+    box.querySelectorAll('[data-o]').forEach(btn => btn.onclick = () => { box.innerHTML=''; onPick(opts[+btn.dataset.o]); });
+  };
+  telEl.addEventListener('input', () => { clearTimeout(t); t = setTimeout(()=>run(telEl.value,false), 250); });
+  nomEl.addEventListener('input', () => { clearTimeout(t); t = setTimeout(()=>run(nomEl.value,true), 250); });
+}
+
 /* new order */
 $('#fab').onclick = () => newOrder();
 function newOrder(){
-  let canal = 'whatsapp', metodo = 'Nequi', foto = null, clienteId = null;
+  let canal = 'whatsapp', metodo = 'Nequi', clienteId = null;
   sheet(`<button class="close" onclick="closeSheet()">Cerrar</button>
-  <h2>Nuevo encargo</h2><p class="sub">Registra el pedido apenas llegue el abono.</p>
+  <h2>Nuevo encargo</h2><p class="sub">Registra el pedido apenas llegue el abono. Un encargo puede tener varios artículos.</p>
   <form id="fNew">
     <fieldset><legend>Cliente</legend>
-      <label>Celular<input id="nTel" inputmode="tel" required placeholder="300 123 4567"></label>
+      <label>Celular<input id="nTel" inputmode="tel" required placeholder="Escribe el celular para buscarlo" autocomplete="off"></label>
       <div id="nFound"></div>
-      <div class="row"><label>Nombre<input id="nNom" required></label><label>Instagram<input id="nIg" placeholder="@usuario"></label></div>
+      <div class="row"><label>Nombre<input id="nNom" required autocomplete="off"></label><label>Instagram<input id="nIg" placeholder="@usuario"></label></div>
       <label>Ciudad<input id="nCiu"></label>
     </fieldset>
     <fieldset><legend>Canal</legend><div class="seg" id="segCanal">${Object.entries(CANALES).map(([k,t])=>`<button type="button" data-v="${k}" aria-pressed="${k===canal}">${t}</button>`).join('')}</div>
       <label>Número de la empresa que recibió el pedido<input id="nOrig" inputmode="tel" placeholder="Opcional"></label>
     </fieldset>
-    <fieldset><legend>Producto</legend>
-      <label class="photo-pick" for="nFoto"><img id="nPrev" class="hidden" alt=""><span id="nFotoTxt">Agregar foto del artículo</span><input type="file" id="nFoto" accept="image/*" class="hidden"></label>
-      <label>Artículo<input id="nProd" required placeholder="Camiseta polo, buzo, perfume…"></label>
-      <div class="row3"><label>Marca<input id="nMarca" list="marcas"></label><label>Talla<input id="nTalla"></label><label>Color<input id="nColor"></label></div>
-      <datalist id="marcas">${['Hugo Boss','Psycho Bunny','Tommy Hilfiger','True Religion','Calvin Klein','Guess','Karl Lagerfeld','Off-White','Lacoste','Polo Ralph Lauren'].map(m=>`<option value="${m}">`).join('')}</datalist>
-    </fieldset>
+    <fieldset><legend>Artículos</legend><div id="nItems"></div></fieldset>
     <fieldset><legend>Pago</legend>
-      <div class="row"><label>Valor total<input id="nTotal" inputmode="numeric" required></label><label>Abono recibido<input id="nAbono" inputmode="numeric" required></label></div>
+      <div class="totalbox"><span>Total del encargo</span><b id="nTotal">$ 0</b></div>
+      <label>Abono recibido<input id="nAbono" inputmode="numeric" required></label>
       <div class="hint" id="nHint">El abono suele ser el 30%.</div>
       <div class="seg" id="segMet">${METODOS.map(m=>`<button type="button" data-v="${m}" aria-pressed="${m===metodo}">${m}</button>`).join('')}</div>
       <label class="photo-pick" for="nComp"><span id="nCompTxt">Adjuntar comprobante (opcional)</span><input type="file" id="nComp" accept="image/*,application/pdf" class="hidden"></label>
@@ -456,39 +561,39 @@ function newOrder(){
     <label>Notas<textarea id="nNotas" rows="2"></textarea></label>
     <button class="primary" id="nSave">Guardar encargo</button>
   </form>`);
-  moneyInput($('#nTotal')); moneyInput($('#nAbono'));
-  const hint = () => { const t=num($('#nTotal').value), a=num($('#nAbono').value); $('#nHint').textContent = t ? `30% = ${cop(Math.round(t*.3/1000)*1000)}${a?` · abono = ${Math.round(a*100/t)}% · saldo ${cop(t-a)}`:''}` : 'El abono suele ser el 30%.'; };
-  $('#nTotal').oninput = $('#nAbono').oninput = hint;
-  $('#nTotal').addEventListener('input',()=>{}); 
+  const ed = itemsEditor($('#nItems'));
+  moneyInput($('#nAbono'));
+  const hint = () => { const t=ed.total(), a=num($('#nAbono').value); $('#nTotal').textContent = cop(t); $('#nHint').textContent = t ? `30% = ${cop(Math.round(t*.3/1000)*1000)}${a?` · abono = ${Math.round(a*100/t)}% · saldo ${cop(t-a)}`:''}` : 'El abono suele ser el 30%.'; };
+  $('#nItems').addEventListener('total', hint); $('#nAbono').addEventListener('input', hint);
   $('#segCanal').onclick = e => { const b=e.target.closest('button'); if(!b) return; canal=b.dataset.v; [...$('#segCanal').children].forEach(x=>x.setAttribute('aria-pressed', x===b)); };
   $('#segMet').onclick = e => { const b=e.target.closest('button'); if(!b) return; metodo=b.dataset.v; [...$('#segMet').children].forEach(x=>x.setAttribute('aria-pressed', x===b)); };
-  $('#nFoto').onchange = e => { foto = e.target.files[0]; if(foto){ $('#nPrev').src = URL.createObjectURL(foto); $('#nPrev').classList.remove('hidden'); $('#nFotoTxt').textContent = 'Cambiar foto'; } };
   $('#nComp').onchange = e => { $('#nCompTxt').textContent = e.target.files[0] ? e.target.files[0].name : 'Adjuntar comprobante (opcional)'; };
-  $('#nTel').onblur = async () => {
-    const tel = normPhone($('#nTel').value); if(!tel) return;
-    const {data} = await sb.from('clientes').select('*').eq('telefono', tel).maybeSingle();
-    if(data){ clienteId = data.id; $('#nNom').value = data.nombre; $('#nIg').value = data.instagram||''; $('#nCiu').value = data.ciudad||'';
-      const prev = rows.filter(r=>r.cliente_id===data.id).length;
-      $('#nFound').innerHTML = `<div class="found">Cliente existente${prev?` · ${prev} encargo${prev>1?'s':''} antes`:''}</div>`; }
-    else { clienteId = null; $('#nFound').innerHTML=''; }
-  };
+  clientSearch($('#nTel'), $('#nNom'), $('#nFound'), o => {
+    clienteId = o.id || null;
+    $('#nTel').value = o.telefono || $('#nTel').value; $('#nNom').value = o.nombre || '';
+    $('#nCiu').value = o.ciudad || ''; if(o.instagram) $('#nIg').value = o.instagram;
+    const prev = o.id ? rows.filter(r=>r.cliente_id===o.id).length : 0;
+    $('#nFound').innerHTML = `<div class="found">${esc(o.src)}${prev?` · ${prev} encargo${prev>1?'s':''} antes`:''}</div>`;
+  });
   $('#fNew').onsubmit = async e => {
     e.preventDefault();
-    const total = num($('#nTotal').value), abono = num($('#nAbono').value);
+    const items = ed.get(), total = ed.total(), abono = num($('#nAbono').value);
+    if(items.some(it=>!it.producto)) return toast('Escribe el nombre de cada artículo');
+    if(!total) return toast('Escribe el precio de los artículos');
     if(abono > total) return toast('El abono no puede ser mayor al total');
     $('#nSave').disabled = true; $('#nSave').textContent = 'Guardando…';
     try{
       const tel = normPhone($('#nTel').value);
       const cli = {nombre: $('#nNom').value.trim(), telefono: tel, instagram: $('#nIg').value.trim()||null, ciudad: $('#nCiu').value.trim()||null};
-      if(clienteId){ await sb.from('clientes').update(cli).eq('id', clienteId); }
-      else { const {data, error} = await sb.from('clientes').insert(cli).select('id').single(); if(error) throw error; clienteId = data.id; }
-      const foto_url = foto ? await uploadFile(foto, 'fotos') : null;
+      const {data:c, error:ec} = await sb.from('clientes').upsert(cli, {onConflict:'telefono'}).select('id').single();
+      if(ec) throw ec; clienteId = c.id;
+      const resumen = items.length===1 ? items[0].producto : `${items.length} artículos: ${items.map(i=>i.producto).join(', ')}`;
       const {data:enc, error:e2} = await sb.from('encargos').insert({
         cliente_id: clienteId, canal, numero_origen: normPhone($('#nOrig').value)||null,
-        producto: $('#nProd').value.trim(), marca: $('#nMarca').value.trim()||null, talla: $('#nTalla').value.trim()||null,
-        color: $('#nColor').value.trim()||null, foto_url, valor_total: total, notas: $('#nNotas').value.trim()||null
+        producto: resumen, valor_total: total, notas: $('#nNotas').value.trim()||null
       }).select('id,codigo').single();
       if(e2) throw e2;
+      await ed.save(enc.id);
       if(abono>0){
         const comp = $('#nComp').files[0] ? await uploadFile($('#nComp').files[0], 'comprobantes') : null;
         const {error:e3} = await sb.from('pagos').insert({encargo_id: enc.id, tipo:'abono', monto: abono, metodo, comprobante_url: comp});
@@ -510,10 +615,8 @@ async function openDetail(id){
   sheet(`<button class="close" onclick="closeSheet()">Cerrar</button>
     <h2>${esc(r.codigo)} · ${esc(r.cliente_nombre)}</h2>
     <p class="sub" style="color:var(--s-${r.estado});font-weight:700">${st.t}${r.alerta_retraso?' · lleva '+r.dias_desde_abono+' días':''}</p>
-    ${img?`<img class="d-photo" src="${img}" alt="Foto de ${esc(r.producto)}">`:''}
+    <div class="d-items">${(itemsBy[r.id]||[]).map(it=>`<div class="d-item">${it.foto_url&&photoUrls[it.foto_url]?`<img src="${photoUrls[it.foto_url]}" alt="Foto de ${esc(it.producto)}" data-big="${photoUrls[it.foto_url]}">`:'<div class="noimg"></div>'}<div>${esc(it.producto)}<small>${esc([it.marca, it.talla&&'talla '+it.talla, it.color].filter(Boolean).join(' · '))}</small></div><b>${cop(it.precio)}</b></div>`).join('')}</div>
     <dl class="kv">
-      <dt>Artículo</dt><dd>${esc([r.producto,r.marca].filter(Boolean).join(' · '))}</dd>
-      ${r.talla?`<dt>Talla</dt><dd>${esc(r.talla)}${r.color?' · '+esc(r.color):''}</dd>`:''}
       <dt>Celular</dt><dd>${esc(r.cliente_telefono||'—')}</dd>
       ${r.cliente_instagram?`<dt>Instagram</dt><dd>${esc(r.cliente_instagram)}</dd>`:''}
       <dt>Canal</dt><dd>${CANALES[r.canal]}${r.numero_origen?' · '+esc(r.numero_origen):''}</dd>
@@ -533,6 +636,7 @@ async function openDetail(id){
     <h3>Pagos</h3><ul class="pays">${(pays||[]).map(p=>`<li><span>${p.tipo==='abono'?'Abono':p.tipo==='saldo'?'Saldo':p.tipo==='envio'?'Envío':'Devolución'} · ${esc(p.metodo||'')}</span>${p.comprobante_url?`<a href="#" data-comp="${esc(p.comprobante_url)}">comprobante</a>`:''}<b>${p.tipo==='devolucion'?'-':''}${cop(p.monto)}</b></li>`).join('') || '<li>Sin pagos</li>'}</ul>
     <h3>Historial</h3><ul class="timeline">${(hist||[]).map(h=>`<li><span>${E[h.estado_nuevo].t}</span><span style="color:var(--mute)">${esc((h.cambiado_por||'').split('@')[0])}</span><time>${fdt(h.cambiado_en)}</time></li>`).join('')}</ul>
   `);
+  $('#sheetRoot').querySelectorAll('[data-big]').forEach(im => im.onclick = () => window.open(im.dataset.big, '_blank'));
   $('#dNext') && ($('#dNext').onclick = () => advance(r));
   $('#dWa') && ($('#dWa').onclick = () => { window.open(waLink(r), '_blank'); });
   $('#dPay').onclick = () => payForm(r);
@@ -587,25 +691,23 @@ function payForm(r, isSaldo){
   };
 }
 function editForm(r){
-  sheet(`<button class="close" onclick="closeSheet()">Cerrar</button><h2>Editar ${esc(r.codigo)}</h2><p class="sub">&nbsp;</p>
+  sheet(`<button class="close" onclick="closeSheet()">Cerrar</button><h2>Editar ${esc(r.codigo)}</h2><p class="sub">El total se recalcula con los precios de los artículos.</p>
     <form id="fEd">
-      <label class="photo-pick" for="eFoto"><span id="eFotoTxt">${r.foto_url?'Cambiar foto':'Agregar foto'}</span><input type="file" id="eFoto" accept="image/*" class="hidden"></label>
-      <label>Artículo<input id="eProd" value="${esc(r.producto)}" required></label>
-      <div class="row3"><label>Marca<input id="eMarca" value="${esc(r.marca||'')}"></label><label>Talla<input id="eTalla" value="${esc(r.talla||'')}"></label><label>Color<input id="eColor" value="${esc(r.color||'')}"></label></div>
-      <label>Valor total<input id="eTotal" inputmode="numeric" value="${Number(r.valor_total).toLocaleString('es-CO')}"></label>
+      <fieldset><legend>Artículos</legend><div id="eItems"></div></fieldset>
+      <div class="totalbox"><span>Total del encargo</span><b id="eTotal">${cop(r.valor_total)}</b></div>
       <label>Estado<select id="eEst">${ESTADOS.map(e=>`<option value="${e.k}" ${e.k===r.estado?'selected':''}>${e.t}</option>`).join('')}</select></label>
       <div class="row"><label>Transportadora<input id="eTr" value="${esc(r.transportadora||'')}"></label><label>Guía<input id="eGuia" value="${esc(r.guia||'')}"></label></div>
       <label>Notas<textarea id="eNotas" rows="3">${esc(r.notas||'')}</textarea></label>
       <button class="primary" id="eSave">Guardar cambios</button>
     </form>`);
-  moneyInput($('#eTotal'));
-  $('#eFoto').onchange = e => { $('#eFotoTxt').textContent = e.target.files[0]?.name || 'Cambiar foto'; };
+  const ed = itemsEditor($('#eItems'), itemsBy[r.id]);
+  $('#eItems').addEventListener('total', () => $('#eTotal').textContent = cop(ed.total()));
   $('#fEd').onsubmit = async e => {
     e.preventDefault(); $('#eSave').disabled = true;
     try{
-      const upd = {producto:$('#eProd').value.trim(), marca:$('#eMarca').value.trim()||null, talla:$('#eTalla').value.trim()||null, color:$('#eColor').value.trim()||null,
-        valor_total:num($('#eTotal').value), estado:$('#eEst').value, transportadora:$('#eTr').value.trim()||null, guia:$('#eGuia').value.trim()||null, notas:$('#eNotas').value.trim()||null};
-      if($('#eFoto').files[0]) upd.foto_url = await uploadFile($('#eFoto').files[0],'fotos');
+      if(ed.get().some(it=>!it.producto)) throw new Error('Escribe el nombre de cada artículo');
+      await ed.save(r.id);
+      const upd = {estado:$('#eEst').value, transportadora:$('#eTr').value.trim()||null, guia:$('#eGuia').value.trim()||null, notas:$('#eNotas').value.trim()||null};
       const {error} = await sb.from('encargos').update(upd).eq('id', r.id); if(error) throw error;
       toast('Cambios guardados'); await load(); openDetail(r.id);
     }catch(err){ toast(err.message); $('#eSave').disabled=false; }
@@ -637,6 +739,38 @@ $('#btnCsv').onclick = () => {
   a.download = `encargos-${new Date().toISOString().slice(0,10)}.csv`; a.click();
 };
 
+/* CRM CSV import (Zoho export) */
+function parseCsv(txt){
+  const rows = []; let row = [], f = '', q = false;
+  txt = txt.replace(/^﻿/, '');
+  for(let i=0;i<txt.length;i++){
+    const c = txt[i];
+    if(q){ if(c==='"'){ if(txt[i+1]==='"'){ f+='"'; i++; } else q=false; } else f+=c; }
+    else if(c==='"') q=true;
+    else if(c===','||c===';'){ row.push(f); f=''; }
+    else if(c==='\n'){ row.push(f); rows.push(row); row=[]; f=''; }
+    else if(c!=='\r') f+=c;
+  }
+  if(f||row.length){ row.push(f); rows.push(row); }
+  return rows;
+}
+function crmFromCsv(txt, fuente){
+  const rows = parseCsv(txt); if(rows.length<2) return [];
+  const h = rows[0].map(x=>x.trim().toLowerCase());
+  const col = (...names) => { for(const n of names){ const i = h.indexOf(n); if(i>=0) return i; } return -1; };
+  const iFull = col('full name','nombre completo','lead name','contact name'), iFirst = col('first name','nombre'), iLast = col('last name','apellidos','apellido');
+  const iPhone = col('phone','teléfono','telefono'), iMob = col('mobile','móvil','movil','celular');
+  const iCity = col('city','ciudad','mailing city','ciudad de correo'), iMail = col('email','correo electrónico','correo'), iId = col('record id','id. de registro','id');
+  const out = new Map();
+  for(const r of rows.slice(1)){
+    const tel = normPhone(r[iMob] || r[iPhone] || ''); if(!tel || tel.length < 9) continue;
+    const nombre = (iFull>=0 && r[iFull]) || [r[iFirst], r[iLast]].filter(Boolean).join(' ').trim(); if(!nombre) continue;
+    const ciudad = iCity>=0 && r[iCity] && r[iCity] !== 'Pendiente' ? r[iCity] : null;
+    out.set(tel, {telefono: tel, nombre, ciudad, email: (iMail>=0 && r[iMail]) || null, fuente, zoho_id: (iId>=0 && r[iId]) ? r[iId].replace(/^zcrm_/,'') : null, actualizado: new Date().toISOString()});
+  }
+  return [...out.values()];
+}
+
 /* TEAM (admin) */
 $('#btnTeam').onclick = async () => {
   const {data} = await sb.from('equipo').select('*').order('created_at');
@@ -645,7 +779,27 @@ $('#btnTeam').onclick = async () => {
       ${t.email!==me.email?`<button class="ghost" style="padding:6px 10px" data-tog="${esc(t.email)}" data-on="${t.activo}">${t.activo?'Quitar acceso':'Dar acceso'}</button>`:''}</li>`).join('')}</ul>
     <form id="fTeam" style="margin-top:14px"><div class="row"><label>Nombre<input id="tmN" required></label><label>Correo<input id="tmE" type="email" required></label></div>
     <label>Rol<select id="tmR"><option value="asesor">Asesor</option><option value="admin">Administrador</option></select></label>
-    <button class="primary">Agregar al equipo</button></form>`);
+    <button class="primary">Agregar al equipo</button></form>
+    <h3 style="margin-top:24px">Clientes del CRM (Zoho)</h3>
+    <p class="sub" id="crmCount">Cargando…</p>
+    <label class="photo-pick" for="crmCsv"><span id="crmTxt">Importar exportación de Zoho (CSV de Leads o Contactos)</span><input type="file" id="crmCsv" accept=".csv,text/csv" class="hidden" multiple></label>`);
+  sb.from('crm_clientes').select('*',{count:'exact',head:true}).then(({count}) => { const el=$('#crmCount'); if(el) el.textContent = `${(count||0).toLocaleString('es-CO')} clientes del CRM disponibles para buscar por celular o nombre.`; });
+  $('#crmCsv').onchange = async e => {
+    const files = [...e.target.files]; let total = 0;
+    try{
+      for(const f of files){
+        $('#crmTxt').textContent = `Leyendo ${f.name}…`;
+        const recs = crmFromCsv(await f.text(), /contact/i.test(f.name) ? 'Zoho Contactos' : 'Zoho Leads');
+        for(let i=0;i<recs.length;i+=500){
+          const {error} = await sb.from('crm_clientes').upsert(recs.slice(i,i+500), {onConflict:'telefono'});
+          if(error) throw error;
+          total += Math.min(500, recs.length-i);
+          $('#crmTxt').textContent = `Importando… ${total.toLocaleString('es-CO')}`;
+        }
+      }
+      toast(`${total.toLocaleString('es-CO')} clientes importados`); $('#btnTeam').click();
+    }catch(err){ toast('Error: '+err.message); $('#crmTxt').textContent = 'Importar exportación de Zoho (CSV de Leads o Contactos)'; }
+  };
   $('#sheetRoot').querySelectorAll('[data-tog]').forEach(b => b.onclick = async () => {
     await sb.from('equipo').update({activo: b.dataset.on!=='true'}).eq('email', b.dataset.tog); $('#btnTeam').click();
   });
