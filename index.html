@@ -41,6 +41,13 @@ main{max-width:1100px;margin:0 auto;padding:12px 16px 120px}
 .toolbar{display:flex;gap:8px;margin-bottom:12px}
 .search{flex:1;border:1px solid var(--line);background:var(--card);border-radius:var(--r);padding:11px 12px}
 .ghost{border:1px solid var(--line);background:var(--card);border-radius:var(--r);padding:0 12px;font-size:13px}
+.pick{flex:1;margin:0;font-size:12px;color:var(--mute)}
+.pick select{display:block;width:100%;margin-top:3px;border:1px solid var(--line);border-radius:var(--r);padding:9px 10px;background:var(--card);font-size:14px;color:var(--ink)}
+.group{grid-column:1/-1;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:14px 2px 2px;border-bottom:2px solid var(--ink);margin-top:6px}
+.group:first-child{margin-top:0;padding-top:2px}
+.group h2{font-stretch:110%;font-weight:800;font-size:17px;margin:0;flex:1;min-width:140px}
+.group span{font-size:13px;color:var(--ink-2)}
+.group b{font-weight:700}
 
 /* list */
 .list{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
@@ -164,6 +171,10 @@ h3{font-size:14px;margin:18px 0 4px}
       <input class="search" id="q" type="search" placeholder="Buscar cliente, teléfono, código o producto">
       <button class="ghost" id="btnCsv" title="Descargar lista en CSV">CSV</button>
     </div>
+    <div class="toolbar">
+      <label class="pick">Agrupar por<select id="grp"><option value="dia">Día</option><option value="asesor">Asesor</option><option value="">Sin agrupar</option></select></label>
+      <label class="pick">Asesor<select id="ase"><option value="">Todos</option></select></label>
+    </div>
     <div class="list" id="list"></div>
   </main>
   <button class="fab" id="fab">+ Nuevo encargo</button>
@@ -195,7 +206,18 @@ const FLOW = ESTADOS.slice(0,6).map(e=>e.k);
 const CANALES = {whatsapp:'WhatsApp', instagram:'Instagram', llamada:'Llamada', grupo_vip:'Grupo VIP', tienda:'Tienda', otro:'Otro'};
 const METODOS = ['Nequi','Bancolombia','Daviplata','Efectivo','Transferencia','Otro'];
 
-let me = null, isAdmin = false, rows = [], filter = 'activos', selected = new Set(), photoUrls = {};
+let me = null, isAdmin = false, rows = [], filter = 'activos', selected = new Set(), photoUrls = {}, team = {};
+const pref = (k,d) => { try { return localStorage.getItem('enc_'+k) ?? d; } catch(_) { return d; } };
+const setPref = (k,v) => { try { localStorage.setItem('enc_'+k, v); } catch(_) {} };
+const asesorName = e => team[e] || (e ? e.split('@')[0] : 'Sin asesor');
+const dayKey = d => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`; };
+function dayLabel(k){
+  const today = dayKey(new Date()), y = new Date(); y.setDate(y.getDate()-1);
+  const d = new Date(k+'T12:00:00');
+  const txt = d.toLocaleDateString('es-CO',{weekday:'long', day:'numeric', month:'long'});
+  const cap = txt.charAt(0).toUpperCase()+txt.slice(1);
+  return k===today ? `Hoy · ${cap}` : k===dayKey(y) ? `Ayer · ${cap}` : cap;
+}
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -256,12 +278,21 @@ async function boot(){
   $('#who').textContent = team.nombre;
   $('#btnTeam').classList.toggle('hidden', !isAdmin);
   show('app');
+  $('#grp').value = pref('grp','dia');
+  await loadTeam();
   await load();
   document.addEventListener('visibilitychange', () => { if(!document.hidden) load(); });
 }
 function show(id){ ['auth','noAccess','app'].forEach(x => $('#'+x).classList.toggle('hidden', x!==id)); }
 
 /* ---------- DATA ---------- */
+async function loadTeam(){
+  const {data} = await sb.from('equipo').select('email,nombre').order('nombre');
+  team = Object.fromEntries((data||[]).map(t=>[t.email, t.nombre]));
+  const cur = pref('ase','');
+  $('#ase').innerHTML = '<option value="">Todos</option>' + (data||[]).map(t=>`<option value="${esc(t.email)}">${esc(t.nombre)}</option>`).join('');
+  $('#ase').value = team[cur] ? cur : '';
+}
 async function load(){
   const {data, error} = await sb.from('vista_encargos').select('*').order('created_at',{ascending:false}).limit(1000);
   if(error){ toast('No se pudo cargar: '+error.message); return; }
@@ -297,8 +328,9 @@ function shrink(file){
 
 /* ---------- RENDER ---------- */
 function filtered(){
-  const q = $('#q').value.trim().toLowerCase();
+  const q = $('#q').value.trim().toLowerCase(), ase = $('#ase').value;
   return rows.filter(r => {
+    if(ase && (r.creado_por||'').toLowerCase() !== ase) return false;
     if(filter==='activos' && ['entregado','cancelado'].includes(r.estado)) return false;
     if(filter==='retrasados' && !r.alerta_retraso) return false;
     if(!['activos','todos','retrasados'].includes(filter) && r.estado!==filter) return false;
@@ -322,7 +354,21 @@ function render(){
       : `<div class="empty"><strong>Aún no hay encargos</strong>Toca “Nuevo encargo” para registrar el primero.</div>`;
   } else {
     const bulkable = filter==='encargado' || filter==='abonado';
-    $('#list').innerHTML = list.map(r => card(r, bulkable)).join('');
+    const g = $('#grp').value;
+    if(!g){ $('#list').innerHTML = list.map(r => card(r, bulkable)).join(''); }
+    else {
+      const groups = new Map();
+      list.forEach(r => { const k = g==='dia' ? dayKey(r.created_at) : (r.creado_por||'').toLowerCase(); if(!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
+      let keys = [...groups.keys()];
+      keys = g==='dia' ? keys.sort().reverse() : keys.sort((a,b)=>asesorName(a).localeCompare(asesorName(b),'es'));
+      $('#list').innerHTML = keys.map(k => {
+        const items = groups.get(k);
+        const pagado = items.reduce((s,r)=>s+Number(r.total_pagado||0),0);
+        const debe = items.reduce((s,r)=>s+Math.max(0,Number(r.saldo_pendiente||0)),0);
+        const title = g==='dia' ? dayLabel(k) : asesorName(k);
+        return `<div class="group"><h2>${esc(title)}</h2><span><b>${items.length}</b> encargo${items.length>1?'s':''}</span><span>Recibido <b>${cop(pagado)}</b></span><span>Por cobrar <b>${cop(debe)}</b></span></div>` + items.map(r => card(r, bulkable)).join('');
+      }).join('');
+    }
   }
   updateBulk();
 }
@@ -346,6 +392,8 @@ function card(r, bulkable){
 
 $('#chips').onclick = e => { const b = e.target.closest('[data-f]'); if(!b) return; filter = b.dataset.f; selected.clear(); render(); };
 $('#q').oninput = render;
+$('#grp').onchange = () => { setPref('grp', $('#grp').value); render(); };
+$('#ase').onchange = () => { setPref('ase', $('#ase').value); selected.clear(); render(); };
 $('#list').onclick = e => {
   const ck = e.target.closest('[data-sel]');
   if(ck){ e.stopPropagation(); const id = +ck.dataset.sel; ck.checked ? selected.add(id) : selected.delete(id); render(); return; }
@@ -469,6 +517,7 @@ async function openDetail(id){
       <dt>Celular</dt><dd>${esc(r.cliente_telefono||'—')}</dd>
       ${r.cliente_instagram?`<dt>Instagram</dt><dd>${esc(r.cliente_instagram)}</dd>`:''}
       <dt>Canal</dt><dd>${CANALES[r.canal]}${r.numero_origen?' · '+esc(r.numero_origen):''}</dd>
+      <dt>Asesor</dt><dd>${esc(asesorName((r.creado_por||'').toLowerCase()))} · ${fdt(r.created_at)}</dd>
       <dt>Total</dt><dd>${cop(r.valor_total)}</dd>
       <dt>Pagado</dt><dd>${cop(r.total_pagado)} (${r.porcentaje_pagado}%)</dd>
       <dt>Saldo</dt><dd style="color:${r.saldo_pendiente>0?'var(--danger)':'var(--ok)'}">${cop(r.saldo_pendiente)}</dd>
@@ -583,7 +632,7 @@ function waLink(r){
 $('#btnCsv').onclick = () => {
   const cols = ['codigo','estado','cliente_nombre','cliente_telefono','canal','producto','marca','talla','color','valor_total','total_pagado','saldo_pendiente','fecha_abonado','fecha_encargado','fecha_llego','fecha_saldo_pagado','fecha_despachado','fecha_entregado','transportadora','guia','notas'];
   const q = v => `"${String(v??'').replace(/"/g,'""')}"`;
-  const csv = [cols.join(','), ...filtered().map(r=>cols.map(c=>q(r[c])).join(','))].join('\n');
+  const csv = [cols.join(',')+',asesor', ...filtered().map(r=>cols.map(c=>q(r[c])).join(',')+','+q(asesorName((r.creado_por||'').toLowerCase())))].join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv'}));
   a.download = `encargos-${new Date().toISOString().slice(0,10)}.csv`; a.click();
 };
@@ -603,7 +652,7 @@ $('#btnTeam').onclick = async () => {
   $('#fTeam').onsubmit = async e => {
     e.preventDefault();
     const {error} = await sb.from('equipo').insert({nombre:$('#tmN').value.trim(), email:$('#tmE').value.trim().toLowerCase(), rol:$('#tmR').value});
-    if(error) return toast(error.message); toast('Agregado'); $('#btnTeam').click();
+    if(error) return toast(error.message); toast('Agregado'); await loadTeam(); $('#btnTeam').click();
   };
 };
 
